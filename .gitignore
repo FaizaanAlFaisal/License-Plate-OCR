@@ -11,3 +11,6 @@ data
 # environment folders
 .venv
 .env
+
+# output folders
+detections

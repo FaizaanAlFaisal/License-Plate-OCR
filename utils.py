@@ -144,8 +144,8 @@ class YOLOVideoProcessor:
     """
     
     def __init__(self, yolo_model: YOLO, video_source: str, framerate: int = 30, 
-                 capped_fps: bool = False, restart_on_end: bool = False, classes:list=[],
-                 img_width:int=800, img_height:int=600):
+                 capped_fps: bool = False, restart_on_end: bool = False, confidence:float=0.75, 
+                 classes:list=[], pixel_padding:int=5, img_width:int=800, img_height:int=600):
         
         self.video_capture = VideoCapture(video_source, framerate, capped_fps, restart_on_end)
         self.img_width = img_width
@@ -153,10 +153,8 @@ class YOLOVideoProcessor:
 
         self.yolo_model = yolo_model
         self.classes = classes
-        
-        # torch reid feature extractor
-        # self.model = reidmodel.load_feature_extractor(model_name="resnet50", model_path="model/resnet50.pth")
-
+        self.confidence = confidence
+        self.padding = pixel_padding
 
         # frame processing thread
         self.stop_event = threading.Event()
@@ -194,18 +192,15 @@ class YOLOVideoProcessor:
                 annotated_frame = res.plot() # plot all that are detected
 
                 for detection in res.boxes:
+                    if detection.conf[0] <= self.confidence:
+                        continue
                     xmin, ymin, xmax, ymax = detection.xyxy[0]
                     bbox = (int(xmin), int(ymin), int(xmax), int(ymax))
                     
-                    cropped_image = self.__crop_image(frame, bbox)
+                    cropped_image = self.__crop_image(frame, bbox, self.padding)
                     if cropped_image is not None:
                         timestamp = int(time.time())
-                        # filename = self.__save_cropped_image(cropped_image, detection.id[0], timestamp)
-                        # features = reidmodel.extract_embeddings(cropped_image)
-                        
-                        # add deepface person recognition logic to determine person_name/some unique identifier
-                        # db.insert_entry(embedding=features, person_name=filename, timestamp=timestamp)
-                        
+                        filename = self.__save_cropped_image(cropped_image, detection.id[0], timestamp)
             
             cv2.imshow(feed_name, annotated_frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -213,21 +208,33 @@ class YOLOVideoProcessor:
 
         cv2.destroyAllWindows()
 
-    def __crop_image(self, frame: np.ndarray, bbox: Tuple[int, int, int, int]) -> np.ndarray:
+
+    def __crop_image(self, frame:np.ndarray, bbox: Tuple[int, int, int, int], padding:int=0) -> np.ndarray:
         """
-        Crop the image based on the bounding box coordinates.
+        Crop the image based on the bounding box coordinates, with optional padding.
         
         Args:
             frame (np.ndarray): The original frame.
             bbox (Tuple[int, int, int, int]): Bounding box coordinates (xmin, ymin, xmax, ymax).
+            padding (int): Number of pixels to add as padding around the bounding box.
         
         Returns:
-            np.ndarray: Cropped image.
+            np.ndarray: Cropped image with padding.
         """
         x_min, y_min, x_max, y_max = bbox
-        if x_min < 0 or y_min < 0 or x_max > frame.shape[1] or y_max > frame.shape[0]:
+        
+        # make sure coordinates (with optional padding) are within the frame boundaries
+        x_min = max(0, x_min - padding)
+        y_min = max(0, y_min - padding)
+        x_max = min(frame.shape[1], x_max + padding)
+        y_max = min(frame.shape[0], y_max + padding)
+        
+        # if the adjusted box is invalid
+        if x_min >= x_max or y_min >= y_max:
             return None
+        
         return frame[y_min:y_max, x_min:x_max]
+
 
     def __save_cropped_image(self, cropped_image: np.ndarray, name: str, timestamp:int, output_dir:str="./detections/"):
         """
@@ -247,6 +254,7 @@ class YOLOVideoProcessor:
         filepath = f"./{output_dir}/{filename}"
         cv2.imwrite(filepath, cropped_image)
         return filename
+
 
     def stop(self):
         """
