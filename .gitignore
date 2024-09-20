@@ -1,0 +1,13 @@
+# python cache folder
+.vscode
+__pycache__
+
+# sample data
+data
+*.mp4
+*.jpg
+*.jpeg
+
+# environment folders
+.venv
+.env
