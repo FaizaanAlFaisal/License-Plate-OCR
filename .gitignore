@@ -12,5 +12,9 @@ data
 .venv
 .env
 
+# models (except yolo-license-plates)
+*.pt
+*.pth
+
 # output folders
 detections
