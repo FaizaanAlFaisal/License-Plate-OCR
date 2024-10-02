@@ -7,6 +7,7 @@ from ultralytics.engine.results import Results
 import numpy as np
 import easyocr
 import os
+import re # regex for license plate format matching
 from dotenv import load_dotenv
 from collections import defaultdict
 load_dotenv()
@@ -232,11 +233,7 @@ class YOLOVideoProcessor:
         
         Adds entry to the dict/
         """
-
-        print(f"New object in frame func: id={id}")
         self.top_k_images[id] = []
-
-        return None
     
     
     def __object_being_tracked(self, id:int, confidence:float, cropped_image_path:str):
@@ -245,8 +242,6 @@ class YOLOVideoProcessor:
 
         Updates the top_k_images dict to maintain which images are best to store.
         """
-        
-        print(f"object being tracked func: id={id}")
         # if fewer than k images are stored, simply append a conf/image tuple to the associated id
         if len(self.top_k_images[id]) < self.top_k:
             self.top_k_images[id].append([confidence, cropped_image_path])
@@ -260,6 +255,13 @@ class YOLOVideoProcessor:
             
             # if confidence of new element is larger, replace the least confident element
             if confidence > self.top_k_images[id][smallest_index][0]:
+                img_path_to_del = self.top_k_images[id][smallest_index][1]
+                try:
+                    os.remove(img_path_to_del)
+                    print("File deleted")
+                except Exception as e:
+                    print(f"Error encountered trying to delete file: {e}")
+
                 self.top_k_images[id][smallest_index] = [confidence, cropped_image_path]
 
         # sort the entries
@@ -275,10 +277,15 @@ class YOLOVideoProcessor:
         """
         
         # delete the entry from top_k images and send all files for ocr
+        ocr_images_list = self.top_k_images.pop(id, None)
+        filepaths = [item[1] for item in ocr_images_list]
 
+        plate_num, avg_conf = self.multi_license_plate_ocr(filepaths)
 
-        
-        return None
+        # for path in filepaths:
+        #     os.remove(path)
+
+        print(f"\nDetected License Plate: {plate_num},     Confidence of Result: {avg_conf}\n")
     
 
     def __yolo_detection_processing(self, res : Results, original_frame : np.ndarray):
@@ -289,8 +296,8 @@ class YOLOVideoProcessor:
             res (ultralytics Results): single item in the list of results returned by yolo.track()
             original_frame (np.ndarray): the original frame being processed
         """
-        # for each detection in the result
 
+        # for each detection in the result
         for detection in res.boxes:
 
             det_conf = detection.conf[0]
@@ -298,31 +305,66 @@ class YOLOVideoProcessor:
                 continue
 
             # id of detection by yolo, always unique
-            det_id = detection.id[0]
+            det_id = int(detection.id[0])
             
             # bounding box and crop of object detected
             xmin, ymin, xmax, ymax = detection.xyxy[0]
             bbox = (int(xmin), int(ymin), int(xmax), int(ymax))
             cropped_image = self.__crop_image(original_frame, bbox, self.padding)
             
-            if cropped_image is not None:
-                timestamp = int(time.time())
-                filename = self.__save_cropped_image(cropped_image, detection.id[0], timestamp)
-                
-                # if object has not been detected till now
-                if det_id not in self.top_k_images.keys():
-                    self.__new_object_in_frame(det_id, det_conf, filename)
+            if cropped_image is None:
+                continue
 
-                else:
-                    self.__object_being_tracked(det_id, det_conf, filename)
+            filename = self.__save_cropped_image(cropped_image, detection.id[0])
+            
+            # if object has not been detected till now
+            if det_id in self.top_k_images.keys():
+                self.__object_being_tracked(det_id, det_conf, filename)
 
-                # # perform ocr
-                # plate_num, plate_conf = self.license_plate_ocr(cropped_image)
-                
-                # print("Detected License Plate: ", plate_num)
+            else:
+                self.__new_object_in_frame(det_id, det_conf, filename)
 
 
-    def license_plate_ocr(self, plate_img:np.ndarray):
+    def apply_ocr_rules(self, ocr_string:str) -> str:
+        """
+        This function applies the Rules for valid output format for OCR String.
+
+        For license plate number recognition, rules are: 2 to 4 Capital Letters followed by 3 to 5 digits
+
+        Args:
+            ocr_string (str): Resultant string from OCR is fed as input
+        
+        Returns:
+            formatted_string (str): Resultant string after application of rules.
+        """
+
+        ocr_string = re.sub(r'[^a-zA-Z0-9]', ' ', ocr_string)
+        letter_pattern = re.compile(r'^[A-Z]{2,4}$')
+        number_pattern = re.compile(r'^\d{3,4}$')
+        
+        extracted_nums = None
+        extracted_letters = None
+        segments = ocr_string.strip().split() # split on spaces
+        print("apply_ocr_rules segments", segments)
+
+        for segment in segments:
+            if letter_pattern.match(segment) and extracted_letters is None:
+                extracted_letters = segment
+
+            if number_pattern.match(segment) and extracted_nums is None:
+                extracted_nums = segment
+            
+            if extracted_letters and extracted_nums:
+                break
+        
+        print(f"letters: {extracted_letters}   nums: {extracted_nums}")
+        if extracted_letters and extracted_nums:
+            return f"{extracted_letters} {extracted_nums}"
+        else:
+            return ""
+
+
+    def license_plate_ocr(self, plate_img:np.ndarray) -> tuple[str, float]:
         """
         Extracts the license plate number from a cropped image.
         
@@ -346,13 +388,16 @@ class YOLOVideoProcessor:
             license_plate_number += text + " "
             confidence_scores.append(prob)
 
-        license_plate_number = license_plate_number.strip()
+        # license_plate_number = license_plate_number.strip()
+        license_plate_number = self.apply_ocr_rules(license_plate_number)
         average_confidence = np.mean(confidence_scores) if confidence_scores else 0.0
 
+        if license_plate_number == "":
+            return "", 0.0
         return license_plate_number, average_confidence
     
 
-    def multi_license_plate_ocr(self, plate_image_paths: list):
+    def multi_license_plate_ocr(self, plate_image_paths: list) -> tuple[str, float]:
         """
         Extracts the license plate numbers from a list of cropped images and aggregates the results.
         Pass paths of images of the same item (from different angles).
@@ -373,24 +418,18 @@ class YOLOVideoProcessor:
             if plate_img is None:
                 print(f"Warning: Unable to read image at {path}. Skipping.")
                 continue
+            print(f"File: {path}")
+            text, conf = self.license_plate_ocr(plate_img)
+            # print(f"incomplete prediction: {text}, conf: {conf}")
+            results[text] = conf
 
-            gray_image = cv2.cvtColor(plate_img, cv2.COLOR_BGR2GRAY)
-            _, binary_image = cv2.threshold(gray_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-            # Perform OCR
-            ocr_results = self.ocr_reader.readtext(binary_image)
-
-            for (bbox, text, prob) in ocr_results:
-                results[text].append(prob)
-
-        # Aggregate results
         aggregated_results = {}
         
         for text, confidences in results.items():
             avg_confidence = np.mean(confidences)
             aggregated_results[text] = avg_confidence
 
-        # Find the best result based on average confidence
+        # best result based on avg confidence
         if aggregated_results:
             best_result = max(aggregated_results.items(), key=lambda x: x[1])
             license_plate_number, average_confidence = best_result
@@ -427,7 +466,7 @@ class YOLOVideoProcessor:
         return frame[y_min:y_max, x_min:x_max]
 
 
-    def __save_cropped_image(self, cropped_image: np.ndarray, name: str, timestamp:int, output_dir:str="./detections/"):
+    def __save_cropped_image(self, cropped_image: np.ndarray, name: str, output_dir:str="./detections/"):
         """
         Save the cropped image with a unique name based on the detected class.
         Creates the specified folder at the path if it does not already exist.
@@ -435,7 +474,6 @@ class YOLOVideoProcessor:
         Args:
             cropped_image (np.ndarray): The cropped image to save.
             name (str): Some semi-unique name or identifier.
-            timestamp (int): UNIX timestamp for unique filename generation.
             output_dir (str): Relative path to output folder.
 
         Returns:
@@ -445,8 +483,9 @@ class YOLOVideoProcessor:
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-        timestamp = int(time.time())
+        timestamp = time.time()
         filename = f"{name}_{timestamp}.jpg"
+        
         filepath = f"./{output_dir}/{filename}"
         cv2.imwrite(filepath, cropped_image)
         return filepath
