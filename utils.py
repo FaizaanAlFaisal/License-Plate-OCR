@@ -133,7 +133,6 @@ class VideoCapture:
 
 
 
-
 class YOLOVideoProcessor:
     """
     YOLOVideoProcessor
@@ -164,6 +163,12 @@ class YOLOVideoProcessor:
         self.video_capture = VideoCapture(video_source, framerate, capped_fps, restart_on_end)
         self.img_width = img_width
         self.img_height = img_height
+        self.overlay_image = None
+        self.overlay_text = None
+        self.overlay_x = 20
+        self.overlay_y = 20
+        self.overlay_width = 200
+        self.overlay_height = 75
 
         # yolo basics
         self.yolo_model = yolo_model
@@ -220,7 +225,25 @@ class YOLOVideoProcessor:
                 self.__yolo_detection_processing(res, frame)
                 annotated_frame = res.plot() # plot all objects that are detected
             
+            # apply image/text overlay:
+            if self.overlay_image is not None and self.overlay_text is not None:
+                for channel in range(0,3):
+                    annotated_frame[self.overlay_y : self.overlay_y + self.overlay_height, 
+                                    self.overlay_x : self.overlay_x + self.overlay_width, channel] = self.overlay_image
+
+
+                text_background_pos = (self.overlay_x,  self.overlay_y+self.overlay_height)
+                cv2.rectangle(annotated_frame, text_background_pos, 
+                      (text_background_pos[0] + self.overlay_width, text_background_pos[1] + self.overlay_height//2), 
+                      (50,50,50),
+                      cv2.FILLED)
+                
+                cv2.putText(annotated_frame, self.overlay_text,
+                            (text_background_pos[0]+10, text_background_pos[1]+30), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (220,220,220), 2,)
+                
             cv2.imshow(feed_name, annotated_frame)
+
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
@@ -258,7 +281,7 @@ class YOLOVideoProcessor:
                 img_path_to_del = self.top_k_images[id][smallest_index][1]
                 try:
                     os.remove(img_path_to_del)
-                    print("File deleted")
+                    # print("File deleted")
                 except Exception as e:
                     print(f"Error encountered trying to delete file: {e}")
 
@@ -282,6 +305,14 @@ class YOLOVideoProcessor:
 
         plate_num, avg_conf = self.multi_license_plate_ocr(filepaths)
 
+        # save text and image of license plate to display in overlay
+        if plate_num != "":
+            self.overlay_text = plate_num
+
+            if len(filepaths) >= 1:
+                img = cv2.imread(filepaths[0], cv2.IMREAD_GRAYSCALE)
+                self.overlay_image = cv2.resize(img, (self.overlay_width, self.overlay_height))
+        
         # for path in filepaths:
         #     os.remove(path)
 
@@ -338,6 +369,8 @@ class YOLOVideoProcessor:
             formatted_string (str): Resultant string after application of rules.
         """
 
+        print(f"Unparsed text: {ocr_string}")
+
         ocr_string = re.sub(r'[^a-zA-Z0-9]', ' ', ocr_string)
         letter_pattern = re.compile(r'^[A-Z]{2,4}$')
         number_pattern = re.compile(r'^\d{3,4}$')
@@ -345,7 +378,7 @@ class YOLOVideoProcessor:
         extracted_nums = None
         extracted_letters = None
         segments = ocr_string.strip().split() # split on spaces
-        print("apply_ocr_rules segments", segments)
+        # print("apply_ocr_rules segments", segments)
 
         for segment in segments:
             if letter_pattern.match(segment) and extracted_letters is None:
@@ -357,7 +390,7 @@ class YOLOVideoProcessor:
             if extracted_letters and extracted_nums:
                 break
         
-        print(f"letters: {extracted_letters}   nums: {extracted_nums}")
+        # print(f"letters: {extracted_letters}   nums: {extracted_nums}")
         if extracted_letters and extracted_nums:
             return f"{extracted_letters} {extracted_nums}"
         else:
@@ -397,13 +430,13 @@ class YOLOVideoProcessor:
         return license_plate_number, average_confidence
     
 
-    def multi_license_plate_ocr(self, plate_image_paths: list) -> tuple[str, float]:
+    def multi_license_plate_ocr(self, plate_image_paths: list[str]) -> tuple[str, float]:
         """
         Extracts the license plate numbers from a list of cropped images and aggregates the results.
         Pass paths of images of the same item (from different angles).
         
         Args:
-            plate_image_paths (list): A list of file paths to the cropped images of license plates.
+            plate_image_paths (list[str]): A list of strings file paths to the cropped images of license plates.
             
         Returns:
             tuple: A tuple containing the most likely extracted license plate number (str) and the average confidence score (float).
@@ -418,7 +451,7 @@ class YOLOVideoProcessor:
             if plate_img is None:
                 print(f"Warning: Unable to read image at {path}. Skipping.")
                 continue
-            print(f"File: {path}")
+            # print(f"File: {path}")
             text, conf = self.license_plate_ocr(plate_img)
             # print(f"incomplete prediction: {text}, conf: {conf}")
             results[text] = conf
