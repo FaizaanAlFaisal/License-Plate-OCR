@@ -1,17 +1,13 @@
-# Smart-Parking
-Smart parking system with automatic license plate detection, and license plate number recognition.
+# License Plate OCR
+A part of a smart-parking system with automatic license plate detection, and license plate number recognition.
 
-This system combines a custom YOLO model trained to detect (Pakistani) license plates. After detecting the license plate, once it leaves frame, the best image of the license plate alongside the determined text are shown in top left.
-
-
-_____
+This system combines a custom YOLO model trained to detect (Pakistani) license plates. After detecting the license plate, once it leaves frame, the best image of the license plate taken alongside the determined text are displayed in top left of video feed.
 
 
 ## Demo
 
-![Demo GIF](.\assets\PlateOCR-Demo.gif)
+![Demo GIF](https://github.com/FaizaanAlFaisal/License-Plate-OCR/blob/main/assets/PlateOCR-Demo.gif)
 
-_____
 
 ## Usage
 
