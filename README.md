@@ -5,7 +5,6 @@ This system combines a custom YOLO model trained to detect (Pakistani) license p
 
 
 ## Demo
-
 ![Demo GIF](https://github.com/FaizaanAlFaisal/License-Plate-OCR/blob/main/assets/PlateOCR-Demo.gif)
 
 
